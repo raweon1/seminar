@@ -24,12 +24,17 @@ class SimEnv(simpy.Environment):
         self.accum_viewport = accum_viewport
         self.viewport = viewport
 
+        self.representation_byte_rates = [0] * segment_sizes[0].__len__()
+        for segment_size_per_quality in segment_sizes:
+            for i, segment_size in enumerate(segment_size_per_quality, 0):
+                self.representation_byte_rates[i] += segment_size / segment_count
+
         # > prediction_offset: download from accum_viewport, else download from viewport
         self.prediction_offset = 2
 
         self.bandwidth_manager = BandwidthManager(bandwidth_trace)
         self.buffer = Buffer()
-        self.adaption = Name(self.buffer)
+        self.adaption = Name(self.buffer, self.representation_byte_rates)
 
         self.playback_position = 0
         self.playback_stalled = False
@@ -80,7 +85,7 @@ class SimEnv(simpy.Environment):
             self.wake_playback()
             yield self.timeout(download_time)
 
-            yield self.timeout(1)
+            #yield self.timeout(1)
 
             download_index += 1
 

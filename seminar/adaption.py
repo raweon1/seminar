@@ -4,7 +4,7 @@ from seminar.buffer import Buffer
 
 
 class Name:
-    def __init__(self, buffer: Buffer):
+    def __init__(self, buffer: Buffer, representation_byte_rates):
         # safety margins, values used by the paper
         self.a = [0.75, 0.33, 0.5, 0.75, 0.9]
         self.delta_beta = 1
@@ -15,14 +15,7 @@ class Name:
         self.b_high = 30
         self.b_opt = (self.b_low + self.b_high) * 0.5
 
-        self.r = [156558 / 5.4,
-                  247232 / 5.4,
-                  510217 / 5.4,
-                  853323 / 5.4,
-                  1623540 / 5.4,
-                  3008203 / 5.4,
-                  7133363 / 5.4,
-                  14154060 / 5.4]
+        self.r = representation_byte_rates
         self.r_min = 0
         self.r_max = self.r.__len__() - 1
 
