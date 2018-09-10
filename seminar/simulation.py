@@ -24,18 +24,21 @@ class SimEnv(simpy.Environment):
         self.accum_viewport = accum_viewport
         self.viewport = viewport
 
-        # average byte size per quality
+        self.tile_count = 64
+
+        # average byte / second per quality
         self.representation_byte_rates = [0] * segment_sizes[0].__len__()
         for segment_size_per_quality in segment_sizes:
             for i, segment_size in enumerate(segment_size_per_quality, 0):
-                self.representation_byte_rates[i] += segment_size / segment_count
-
-        # > prediction_offset: download from accum_viewport, else download from viewport
-        self.prediction_offset = 2
+                self.representation_byte_rates[i] += (segment_size / segment_count) / 2  # duration
+        # es werden max 12 tiles mit der representation runtergeladen, alle anderen mit q0 -> normalisierung der byte rates
+        self.representation_byte_rates = [byte_rate * (12 / 64) + self.representation_byte_rates[0] * (52 / 64) for byte_rate in self.representation_byte_rates]
 
         self.bandwidth_manager = BandwidthManager(bandwidth_trace)
         self.buffer = Buffer()
-        self.adaption = Name(self.buffer, self.representation_byte_rates)
+        self.adaption = Name(self.buffer, self.representation_byte_rates, 0, 4, 6)
+
+        self.buffer_long = Buffer()
 
         self.playback_position = 0
         self.playback_start_time = 0
@@ -78,18 +81,28 @@ class SimEnv(simpy.Environment):
         self.wake_playback()
         yield self.timeout(download_time)
 
-        download_index = 1
-        while download_index < self.segment_count:
+        download_index_short = 1
+        download_index_long = 1
+        while download_index_short < self.segment_count:
             representation, delay = self.adaption.get()
-            simprint(self, "starting download segment: %d, representation: %d" % (download_index, representation))
-            segment = self.get_segment(representation, download_index)
+            simprint(self, "starting download segment: %d, representation: %d" % (download_index_short, representation))
+            segment = self.get_segment(representation, download_index_short)
             download_time = self.bandwidth_manager.get_download_time(self.now, segment.__len__())
-            # yield self.timeout(delay)
             self.buffer.download_started(self.now, self.now + download_time, segment)
             self.wake_playback()
             yield self.timeout(download_time)
+            download_index_short += 1
+            download_index_long += 1
+            simprint(self, "finished download segment: %d, representation: %d" % (download_index_short, representation))
 
-            download_index += 1
+            factor = 1
+            while delay > 0 and download_index_long < self.segment_count:
+                estimated_byte_count = delay * factor * self.adaption.average_throughput(self.now - self.adaption.delta_t, self.now)
+                print(self.bandwidth_manager.get_download_time(self.now, self.get_accum_viewport_segment(estimated_byte_count, download_index_long).__len__()))
+                print(delay)
+                delay -= delay
+                download_index_long += 1
+                yield self.timeout(delay)
 
     def wake_playback(self):
         if self.playback_stalled:
@@ -126,8 +139,40 @@ class SimEnv(simpy.Environment):
                 tmp.append(self.representation_byte_rates[0] / 64)
         return Segment(index, i, self.get_segment_duration(index), tmp)
 
-    def get_segment(self, representation, index):
-        return Segment(index, representation, self.get_segment_duration(index), [self.segment_sizes[index][representation] / 64] * 64)
+    def get_accum_viewport_segment(self, max_bytes, index):
+        segment_sizes = self.segment_sizes[index]
+        segment_viewport = self.accum_viewport[index]
+        accum_tile_sum = sum(segment_viewport)
+        normalized_segment_viewport = [tile / accum_tile_sum for tile in segment_viewport]
+
+        foobar = []
+
+        tiles = []
+        for tile in normalized_segment_viewport:
+            max_tile_byte = tile * max_bytes
+            foo = tiles.__len__()
+            for i, quality in reversed(list(enumerate(segment_sizes))):
+                if max_tile_byte > quality / self.tile_count:
+                    foobar.append(i)
+                    tiles.append(quality / self.tile_count)
+                    break
+            if foo == tiles.__len__():
+                foobar.append(0)
+                tiles.append(segment_sizes[0] / self.tile_count)
+        print(foobar, foobar.__len__())
+        return Segment(index, -1, self.get_segment_duration(index), tiles)
+
+    def get_segment(self, representation, index) -> Segment:
+        segment_sizes = self.segment_sizes[index]
+        segment_viewport = self.viewport[index]
+        tiles = []
+        for tile in segment_viewport:
+            if tile == 1:
+                tiles.append(segment_sizes[representation] / self.tile_count)
+            else:
+                # tiles.append(segment_sizes[representation] / self.tile_count)
+                tiles.append(segment_sizes[0] / self.tile_count)
+        return Segment(index, representation, self.get_segment_duration(index), tiles)
 
 
 SimEnv([(0, 781250)],

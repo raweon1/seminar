@@ -4,15 +4,15 @@ from seminar.buffer import Buffer
 
 
 class Name:
-    def __init__(self, buffer: Buffer, representation_byte_rates):
+    def __init__(self, buffer: Buffer, representation_byte_rates, b_min, b_low, b_high):
         # safety margins, values used by the paper
         self.a = [0.75, 0.33, 0.5, 0.75, 0.9]
         self.delta_beta = 1
         self.delta_t = 10
 
-        self.b_min = 1
-        self.b_low = 4
-        self.b_high = 8
+        self.b_min = b_min
+        self.b_low = b_low
+        self.b_high = b_high
         self.b_opt = (self.b_low + self.b_high) * 0.5
 
         self.r = representation_byte_rates
@@ -76,11 +76,11 @@ class Name:
 
     def segment_throughput(self, index):
         start, end, segment = self.buffer.downloaded_segments[index]
-        return (self.r[segment.representation] * segment.duration) / (end - start)
+        return (segment.__len__()) / (end - start)
 
     # byte / second
     def average_throughput(self, t1, t2):
-        segments = self.buffer.downloaded_segments + self.buffer.extra_segments.items()
+        segments = self.buffer.downloaded_segments
         n = 0
         for (start, end, segment) in segments:
             if end <= t2:

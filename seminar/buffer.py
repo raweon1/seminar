@@ -35,9 +35,6 @@ class Buffer:
     def get_segment(self, index) -> Segment:
         return self.downloaded_segments[index][2]
 
-    def has_extra(self, index):
-        return index in self.extra_segments.keys()
-
     def playback_available(self, time, index):
         return index < self.downloaded_segments.__len__()
 

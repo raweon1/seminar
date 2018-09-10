@@ -161,6 +161,7 @@ segment_sizes = [[95259, 97947, 105036, 105254, 115267, 135335, 179695, 211355],
 
 factor = 2 / deadlines[1]
 segment_sizes2 = [[int(quality * factor) for quality in segment] for segment in segment_sizes]
+print(segment_sizes2)
 
 accum_viewport = [
     [0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 2, 1, 0, 2, 2, 3, 12, 14, 18, 25, 28, 24, 11, 11, 14, 18, 25, 34, 34, 31, 16, 15, 13,
