@@ -77,6 +77,8 @@ deadlines = [0,
              405.338267000000,
              410.66]
 
+deadlines2 = [2 * i for i in range(0, deadlines.__len__())]
+
 # segment_sizes[i] = list of byte size of segment i for all qualities, sorted by quality
 # size of one tile: segment_sizes[i][j] / tile_count
 segment_sizes = [[95259, 97947, 105036, 105254, 115267, 135335, 179695, 211355],
@@ -156,6 +158,9 @@ segment_sizes = [[95259, 97947, 105036, 105254, 115267, 135335, 179695, 211355],
                  [152816, 245593, 524660, 891291, 1675519, 3034892, 7003348, 15018596],
                  [157498, 245628, 508846, 865825, 1668603, 2985826, 7169299, 15173273],
                  [159957, 228922, 257823, 411333, 773683, 1559328, 3226277, 4801061]]
+
+factor = 2 / deadlines[1]
+segment_sizes2 = [[int(quality * factor) for quality in segment] for segment in segment_sizes]
 
 accum_viewport = [
     [0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 2, 1, 0, 2, 2, 3, 12, 14, 18, 25, 28, 24, 11, 11, 14, 18, 25, 34, 34, 31, 16, 15, 13,

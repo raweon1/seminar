@@ -6,6 +6,7 @@ from seminar.segment import Segment
 class Buffer:
     def __init__(self):
         self.downloaded_segments = []
+        self.extra_segments = {}
         self.playback = []
 
         self.playback_time = 0
@@ -34,6 +35,9 @@ class Buffer:
     def get_segment(self, index) -> Segment:
         return self.downloaded_segments[index][2]
 
+    def has_extra(self, index):
+        return index in self.extra_segments.keys()
+
     def playback_available(self, time, index):
         return index < self.downloaded_segments.__len__()
 
@@ -47,7 +51,7 @@ class Buffer:
     def download_started(self, start, end, segment: Segment):
         tmp = (start, end, segment)
         if segment.segment_index < self.downloaded_segments.__len__():
-            self.downloaded_segments[segment.segment_index] = tmp
+            self.extra_segments[segment.segment_index] = tmp
         else:
             self.downloaded_segments.append(tmp)
 

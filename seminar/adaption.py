@@ -10,9 +10,9 @@ class Name:
         self.delta_beta = 1
         self.delta_t = 10
 
-        self.b_min = 10
-        self.b_low = 20
-        self.b_high = 30
+        self.b_min = 1
+        self.b_low = 4
+        self.b_high = 8
         self.b_opt = (self.b_low + self.b_high) * 0.5
 
         self.r = representation_byte_rates
@@ -78,8 +78,9 @@ class Name:
         start, end, segment = self.buffer.downloaded_segments[index]
         return (self.r[segment.representation] * segment.duration) / (end - start)
 
+    # byte / second
     def average_throughput(self, t1, t2):
-        segments = self.buffer.downloaded_segments
+        segments = self.buffer.downloaded_segments + self.buffer.extra_segments.items()
         n = 0
         for (start, end, segment) in segments:
             if end <= t2:
