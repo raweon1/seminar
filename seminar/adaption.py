@@ -6,7 +6,7 @@ from seminar.buffer import Buffer
 class Name:
     def __init__(self, buffer: Buffer, representation_byte_rates, b_min, b_low, b_high):
         # safety margins, values used by the paper
-        self.a = [0.75, 0.33, 0.5, 0.75, 0.9]
+        self.a = [0.75, 0.33, 0.5, 0.75, 0.9, 1]
         self.delta_beta = 1
         self.delta_t = 10
 
@@ -52,7 +52,7 @@ class Name:
             if buffer_level < self.b_min:
                 r_next = self.r_min
             elif buffer_level < self.b_low:
-                if r_n != self.r_min and self.r[r_n] >= self.segment_throughput(segment.segment_index):
+                if r_n != self.r_min and self.r[r_n] >= self.segment_throughput(segment.segment_index) * self.a[5]:
                     r_next = r_n - 1
             elif buffer_level < self.b_high:
                 if r_n == self.r_max or self.r[r_n + 1] >= self.a[4] * average_throughput:
