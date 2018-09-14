@@ -26,7 +26,7 @@ class SimEnv(simpy.Environment):
 
         self.tile_count = 64
         self.segment_duration = 2
-        self.threshold_short = 6
+        self.threshold_short = 5
         self.tile_count_short = 12
 
         # average byte / second per quality
@@ -129,10 +129,11 @@ class SimEnv(simpy.Environment):
                 print("downloaded buffer < threshold %d" % (download_index_short - 1))
             else:
                 if self.buffer_short.buffer_level(self.now) < self.threshold_short:
+                    simprint(self, "%f kkk" % self.buffer_short.buffer_level(self.now))
                     if self.buffer_short.buffer_level(self.now) > self.adaption_short.b_min:
                         representation, delay = self.adaption_short.get()
                         segment = self.get_segment(representation, download_index_short)
-                        if self.segment_quality_dif(segment, self.buffer.get_segment(download_index_short)) > 2:
+                        if self.segment_quality_dif(segment, self.buffer.get_segment(download_index_short)) > 1.5:
                             download_time = self.bandwidth_manager.get_download_time(self.now, segment.__len__())
                             self.buffer_short.download_started(self.now, self.now + download_time, segment)
                             self.wake_playback()
@@ -151,6 +152,7 @@ class SimEnv(simpy.Environment):
                         self.buffer_short.download_started(self.now - download_time, self.now, segment)
                         print("put long into short %d" % (download_index_short))
                         self.wake_playback()
+                    simprint(self, "%f xxx" % self.buffer_short.buffer_level(self.now))
                     download_index_short += 1
                 else:
                     if download_index_long < self.segment_count:
@@ -218,10 +220,12 @@ class SimEnv(simpy.Environment):
         return Segment(index, representation, self.get_segment_duration(index), tiles, tile_qualities)
 
 
-# 781250
+# 781250 B/s , 6 MBit/s
+# 6250000 B/s, 50 MBit/s
+# 250000 B/s, 2 MBit/s
 bandwidth = 781250
 bandwidth_trace = [(i, bandwidth - ((781250 * 5 / 6) * (i / 200))) for i in range(0, 200)]
-bandwidth_trace = [(0, 781250), (70, 0), (85, 781250 / 2)]
+bandwidth_trace = [(0, bandwidth), (70, 0), (85, bandwidth / 2)]
 print(bandwidth_trace)
 sim = SimEnv(bandwidth_trace,
              77,
@@ -233,6 +237,9 @@ sim.run()
 
 print([sim.buffer_short.buffer_level(i) for i in range(0, 160)])
 print([sim.buffer.buffer_level(i) for i in range(0, 160)])
+
+print(sim.buffer_short.buffer_level(3.148428))
+print(sim.buffer_short.buffer_level(3))
 
 
 def get_segment_viewport_quality(viewport, buffer):
