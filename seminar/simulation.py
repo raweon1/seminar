@@ -14,6 +14,129 @@ def simprint(env: simpy.Environment, msg: str):
         print("%f: %s" % (env.now, msg))
 
 
+class DualBuffer:
+    def __init__(self):
+        self.short_segments = {}
+        self.long_segments = {}
+
+    def download_short_segment(self, segment: Segment, download: Download):
+        self.short_segments[segment.segment_index] = (segment, download)
+
+    def download_long_segment(self, segment: Segment, download: Download):
+        self.long_segments[segment.segment_index] = (segment, download)
+
+    def buffer_level_short(self, time):
+        for segment, download in self.short_segments:
+            if download.queue_time == 0:
+                pass
+
+
+class DownloadManager:
+    def __init__(self, env: simpy.Environment, bandwidth_manager: BandwidthManager, buffer: DualBuffer):
+        self.env = env
+        self.bandwidth_manager = bandwidth_manager
+        self.buffer = buffer
+
+        self.terminated = False
+        self.download_short = []
+        self.download_long = []
+
+        self.sleep_event = self.env.event()
+        self.process = env.process(self.download())
+
+    def download(self):
+        while not self.terminated:
+            try:
+                if self.download_short.__len__() > 0:
+                    self.download_short[0].start()
+                    yield self.download_short[0].process
+                    self.download_short.pop(0)
+                elif self.download_long.__len__() > 0:
+                    self.download_long[0].start()
+                    yield self.download_long[0].process
+                    self.download_long.pop(0)
+                else:
+                    yield self.sleep_event
+            except simpy.Interrupt:
+                pass
+
+    def queue_download(self, segment: Segment, short: bool):
+        download = Download(self.env, segment, self.bandwidth_manager)
+        if short:
+            self.buffer.download_short_segment(segment, download)
+            self.download_short.append(download)
+            if self.download_long.__len__() > 0:
+                self.download_long[0].pause()
+        else:
+            self.buffer.download_long_segment(segment, download)
+            self.download_long.append(download)
+        self.process.interrupt("new shit")
+
+    def terminate(self):
+        self.terminated = True
+        self.process.interrupt("terminated")
+
+
+class Download:
+    def __init__(self, env: simpy.Environment, segment: Segment, bandwidth_manager: BandwidthManager):
+        self.env = env
+        self.segment = segment
+        self.bandwidth_manager = bandwidth_manager
+
+        self.download_start = 0
+        self.download_time = 0
+        self.remaining_bytes = segment.__len__()
+        self.running = False
+        self.running_time = 0
+        self.queue_time = env.now
+
+        self.sleep_event = env.event()
+        self.process = env.process(self.download())
+
+    def download(self):
+        done = False
+        while not done:
+            try:
+                if self.running:
+                    yield self.env.timeout(self.download_time)
+                    done = True
+                else:
+                    yield self.sleep_event
+            except simpy.Interrupt:
+                pass
+        self.running = False
+        self.running_time += self.env.now - self.download_start
+        self.remaining_bytes = 0
+
+    def progress(self):
+        if self.remaining_bytes == 0:
+            return 1
+        segment_len = self.segment.__len__()
+        if self.running:
+            download_progress = (self.env.now - self.download_start) / (self.download_start + self.download_time)
+            return segment_len / ((segment_len - self.remaining_bytes) + (download_progress * self.remaining_bytes))
+        else:
+            return segment_len / (segment_len - self.remaining_bytes)
+
+    def average_bandwidth(self):
+        return (self.segment.__len__() - self.remaining_bytes) / self.running_time
+
+    def start(self):
+        if not self.running:
+            self.download_start = self.env.now
+            self.download_time = self.bandwidth_manager.get_download_time(self.env.now, self.remaining_bytes)
+            self.running = True
+            self.process.interrupt("wake up")
+
+    def pause(self):
+        if self.running:
+            average_bandwidth = self.bandwidth_manager.get_average_bandwidth(self.download_start, self.env.now)
+            self.remaining_bytes -= average_bandwidth * (self.env.now - self.download_start)
+            self.running = False
+            self.running_time += self.env.now - self.download_start
+            self.process.interrupt("sleep")
+
+
 class SimEnv(simpy.Environment):
     def __init__(self, bandwidth_trace, segment_count, segment_sizes, deadlines, accum_viewport, viewport):
         super(SimEnv, self).__init__()
@@ -43,24 +166,19 @@ class SimEnv(simpy.Environment):
 
         self.bandwidth_manager = BandwidthManager(bandwidth_trace)
         self.buffer = Buffer()
-        self.adaption = Name(self.buffer,
-                             self.byte_rates,
-                             self.threshold_short,
-                             20,
-                             50)
+        self.adaption = Name(self.buffer, self.byte_rates, self.threshold_short, 20, 50)
 
         self.buffer_short = Buffer()
-        self.adaption_short = Name(self.buffer_short,
-                                   self.short_byte_rates,
-                                   1,
-                                   3,
-                                   5)
+        self.adaption_short = Name(self.buffer_short, self.short_byte_rates, 1, 3, 5)
 
         self.playback_position = 0
         self.playback_start_time = 0
         self.playback_finish_time = 0
         self.playback_stalled = False
         self.playback_sleep_event = self.event()
+
+        self.download_short_index = 0
+        self.download_long_index = 0
 
         self.download_process = self.process(self.download())
         self.playback_process = self.process(self.playback())
@@ -94,6 +212,12 @@ class SimEnv(simpy.Environment):
                     except simpy.Interrupt:
                         simprint(self, "segment available")
         simprint(self, "video completed")
+
+    def download_short(self):
+        pass
+
+    def download_long(self):
+        pass
 
     def download(self):
         starting_representation = 3
@@ -256,3 +380,6 @@ def get_segment_viewport_quality(viewport, buffer):
 
 print(get_segment_viewport_quality(sim.viewport, sim.buffer_short))
 print(get_segment_viewport_quality(sim.viewport, sim.buffer))
+
+print(sim.bandwidth_manager.get_download_time(0, 3906250))
+

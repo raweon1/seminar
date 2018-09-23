@@ -16,17 +16,33 @@ class BandwidthManager:
         return bandwidth
 
     def get_download_time(self, time: float, byte_size: float):
-        download_time = 0
+        download_time = time
         for (start, end, bandwidth) in self.bandwidth_trace:
-            if end == -1:
+            if start <= download_time and end == -1:
                 download_time += byte_size / bandwidth
-                return download_time
-            elif start <= time + download_time < end:
-                download = (end - (time + download_time)) * bandwidth
-                if byte_size < download:
-                    download_time += byte_size / bandwidth
-                    return download_time
+                break
+            elif start <= download_time <= end:
+                max_interval_download = bandwidth * (end - download_time)
+                if byte_size > max_interval_download:
+                    byte_size -= max_interval_download
+                    download_time = end
                 else:
-                    download_time += end - (time + download_time)
-                    byte_size -= download
-        return download_time
+                    download_time += byte_size / bandwidth
+                    break
+        return download_time - time
+
+    def get_average_bandwidth(self, start_time: float, end_time: float):
+        average_bandwidth = 0
+        for (start, end, bandwidth) in self.bandwidth_trace:
+            if start < end_time and end == -1:
+                average_bandwidth += bandwidth * (end_time - start)
+                break
+            else:
+                interval_len = self.interval_len(start, end, start_time, end_time)
+                average_bandwidth += bandwidth * interval_len
+        return average_bandwidth / (end_time - start_time)
+
+    @staticmethod
+    def interval_len(i1_b, i1_e, i2_b, i2_e):
+        interval_len = min((i1_e, i2_e)) - max((i1_b, i2_b))
+        return interval_len if interval_len > 0 else 0
