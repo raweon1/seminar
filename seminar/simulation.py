@@ -15,10 +15,11 @@ def simprint(env: simpy.Environment, msg: str):
 
 
 class Download:
-    def __init__(self, env: simpy.Environment, segment: Segment, bandwidth_manager: BandwidthManager):
+    def __init__(self, env: simpy.Environment, segment: Segment, bandwidth_manager: BandwidthManager, short: bool):
         self.env = env
         self.segment = segment
         self.bandwidth_manager = bandwidth_manager
+        self.short = short
 
         self.hist = []
 
@@ -91,6 +92,11 @@ class DualBuffer:
         self.long_segments = {}
         self.playback = []
 
+        # watched segments, short > long
+        self.watched = []
+        # combines short and long segment, if both are completely downloaded
+        self.super_watched = []
+
     def download_short_segment(self, segment: Segment, download: Download):
         self.short_segments[segment.segment_index] = (segment, download)
 
@@ -125,7 +131,7 @@ class DualBuffer:
 
     def playback_available(self, index):
         return (index in self.short_segments and self.short_segments[index][1].finished()) or (
-                    index in self.long_segments and self.long_segments[index][1].finished())
+                index in self.long_segments and self.long_segments[index][1].finished())
 
     def playback_start_next(self, time, index) -> (Segment, float):
         if index in self.short_segments and self.short_segments[index][1].finished():
@@ -134,6 +140,12 @@ class DualBuffer:
             segment, download = self.long_segments[index]
             if index not in self.short_segments:
                 self.short_segments[index] = (segment, download)
+        self.watched.append((time, segment, download))
+        if index in self.short_segments and index in self.long_segments and self.short_segments[index][1].finished() and self.long_segments[index][1].finished():
+            tmp = [short_tiles if short_tiles > long_tiles else long_tiles for short_tiles, long_tiles in zip(self.short_segments[index][0].tile_qualities, self.long_segments[index][0].tile_qualities)]
+            self.super_watched.append(tmp)
+        else:
+            self.super_watched.append(segment.tile_qualities)
         tmp = (time, time + segment.duration, segment.duration)
         self.playback.append(tmp)
         return segment, segment.duration
@@ -171,7 +183,7 @@ class DownloadManager:
         simprint(self.env, "Download Manager terminated")
 
     def queue_download(self, segment: Segment, short: bool) -> simpy.Process:
-        download = Download(self.env, segment, self.bandwidth_manager)
+        download = Download(self.env, segment, self.bandwidth_manager, short)
         if short:
             self.buffer.download_short_segment(segment, download)
             self.download_short.append(download)
@@ -223,9 +235,9 @@ class SimEnv(simpy.Environment):
         short_param = {"r": self.short_byte_rates,
                        "r_max": self.short_byte_rates.__len__() - 1,
                        "r_min": 0,
-                       "b_min": 1,
-                       "b_low": 2,
-                       "b_high": 4}
+                       "b_min": 2,
+                       "b_low": 3,
+                       "b_high": 5}
         long_param = {"r": self.byte_rates,
                       "r_max": self.byte_rates.__len__() - 1,
                       "r_min": 0,
@@ -240,6 +252,7 @@ class SimEnv(simpy.Environment):
         self.playback_stalled = False
         self.playback_sleep_event = self.event()
 
+        self.q_threshold = 0.5
         self.starting_representation = 3
         self.download_short_index = 0
         self.download_long_index = 0
@@ -286,6 +299,7 @@ class SimEnv(simpy.Environment):
         simprint(self, "video completed")
 
     def download_short(self):
+        last_download_index = 0
         simprint(self, "(short) queued download segment: %d" % self.download_short_index)
         segment = self.get_segment(self.starting_representation, self.download_short_index)
         yield self.download_manager.queue_download(segment, True)
@@ -293,18 +307,25 @@ class SimEnv(simpy.Environment):
         simprint(self, "(short) download finished: %d" % self.download_short_index)
 
         while self.download_short_index < self.segment_count - 1:
-            representation, delay = self.adaption.get_short(self.download_short_index, self.now)
+            representation, delay = self.adaption.get_short(last_download_index, self.now)
             if self.download_short_index <= self.playback_position:
                 self.download_short_index = self.playback_position + 1
             else:
                 self.download_short_index += 1
             segment = self.get_segment(representation, self.download_short_index)
-            yield self.timeout(delay)
-            simprint(self, "(short) queued download segment: %d; representation %d" % (
-                self.download_short_index, representation))
-            yield self.download_manager.queue_download(segment, True)
+            if self.download_short_index in self.buffer.long_segments and (representation == 0 or self.segment_quality_dif(segment, self.buffer.long_segments[self.download_short_index][0]) < self.q_threshold):
+                yield self.timeout(delay)
+                self.buffer.short_segments[self.download_short_index] = self.buffer.long_segments[self.download_short_index]
+                simprint(self, "(short) moved segment: %d from long to short" % self.download_short_index)
+                # yield self.timeout(self.segment_duration / 2)
+            else:
+                yield self.timeout(delay)
+                simprint(self, "(short) queued download segment: %d; representation %d" % (
+                    self.download_short_index, representation))
+                yield self.download_manager.queue_download(segment, True)
+                last_download_index = self.download_short_index
+                simprint(self, "(short) download finished: %d" % self.download_short_index)
             self.wake_playback()
-            simprint(self, "(short) download finished: %d" % self.download_short_index)
 
     def download_long(self):
         simprint(self, "(long) queued download segment: %d" % self.download_long_index)
@@ -324,8 +345,8 @@ class SimEnv(simpy.Environment):
             simprint(self, "(long) queued download segment: %d; representation %d" % (
                 self.download_long_index, representation))
             yield self.download_manager.queue_download(segment, False)
-            self.wake_playback()
             simprint(self, "(long) download finished: %d" % self.download_long_index)
+            self.wake_playback()
 
     def download(self):
         starting_representation = 3
@@ -459,7 +480,7 @@ bandwidth = 781250
 bandwidth_trace = [(i, bandwidth - ((781250 * 5 / 6) * (i / 200))) for i in range(0, 200)]
 bandwidth_trace = [(0, bandwidth), (70, 0), (85, bandwidth / 2)]
 print(bandwidth_trace)
-sim = SimEnv(0.3, bandwidth_trace,
+sim = SimEnv(0.5, bandwidth_trace,
              77,
              seminar.values.segment_sizes2,
              seminar.values.deadlines2,
@@ -468,10 +489,13 @@ sim = SimEnv(0.3, bandwidth_trace,
 sim.run()
 
 print(sim.adaption.short)
+print(["short" if download.short else "long" for time, segment, download in sim.buffer.watched])
 
 
-def get_segment_viewport_quality(viewport, buffer):
-    buffer_segments = [segment for _, _, segment in buffer.downloaded_segments]
+def get_segment_viewport_quality(viewport, buffer: dict):
+    buffer_segments = [segment for segment, download in sorted(buffer.values(), key=lambda x: x[0].segment_index)]
+    if buffer_segments.__len__() == 0:
+        return -1
     count = 0
     quality = 0
     for tiles, segment in zip(viewport, buffer_segments):
@@ -481,5 +505,19 @@ def get_segment_viewport_quality(viewport, buffer):
                 quality += segment_tile
     return quality / count
 
-# print(get_segment_viewport_quality(sim.viewport, sim.buffer_short))
-# print(get_segment_viewport_quality(sim.viewport, sim.buffer))
+
+def get_super(viewport, segments_tiles: list):
+    count = 0
+    quality = 0
+    for tiles, segment_tiles in zip(viewport, segments_tiles):
+        for viewport_tile, segment_tile in zip(tiles, segment_tiles):
+            if viewport_tile == 1:
+                count += 1
+                quality += segment_tile
+    return quality / count
+
+
+print(get_segment_viewport_quality(sim.viewport[4:], sim.buffer.long_segments))
+print(get_segment_viewport_quality(sim.viewport[1:], sim.buffer.short_segments))
+print(get_super(sim.viewport[1:], sim.buffer.super_watched))
+

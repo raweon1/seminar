@@ -7,8 +7,7 @@ from seminar.buffer import Buffer
 class DualAdaption:
     # representation_byte_rates, b_min, b_low, b_high
     def __init__(self, bandwidth_manager: BandwidthManager, buffer, short_factor, short_param, long_param):
-        # safety margins, values used by the paper
-        self.a = [0.75, 0.33, 0.5, 0.75, 0.9]
+        self.a = [0.85, 0.85, 0.85, 0.75, 0.9]
         self.delta_beta = 1
         self.delta_t = 5
 
@@ -18,32 +17,43 @@ class DualAdaption:
         self.short_param = short_param
         self.long_param = long_param
 
-        self.running_fast_start = True
+        self.running_fast_start_short = True
+        self.running_fast_start_long = True
 
         self.buffer = buffer
 
         self.short = []
+        self.long = []
 
     def get_short(self, index, time):
+        # last downloaded segment (download short) for representation
         segment, download = self.buffer.short_segments[index]
         buffer_level = self.buffer.buffer_level_short(time)
         monoton = self.monoton_short(time)
-
         self.short.append((time, buffer_level))
-
-        return self.get(time, download, self.short_factor, buffer_level, monoton, self.short_param["r"],
-                        self.short_param["r_max"], self.short_param["r_min"], self.short_param["b_min"],
-                        self.short_param["b_low"], self.short_param["b_high"])
+        r_next, b_delay, running_fast_start = self.get(time, download, self.short_factor, buffer_level, monoton,
+                                                       self.running_fast_start_short, self.short_param["r"],
+                                                       self.short_param["r_max"], self.short_param["r_min"],
+                                                       self.short_param["b_min"],
+                                                       self.short_param["b_low"], self.short_param["b_high"])
+        self.running_fast_start_short = running_fast_start
+        return r_next, b_delay
 
     def get_long(self, index, time):
         segment, download = self.buffer.long_segments[index]
         buffer_level = self.buffer.buffer_level(time)
         monoton = self.monoton_long(time)
-        return self.get(time, download, 1 - self.short_factor, buffer_level, monoton, self.long_param["r"],
-                        self.long_param["r_max"], self.long_param["r_min"], self.long_param["b_min"],
-                        self.long_param["b_low"], self.long_param["b_high"])
+        self.long.append((time, buffer_level))
+        r_next, b_delay, running_fast_start = self.get(time, download, 1 - self.short_factor, buffer_level, monoton,
+                                                       self.running_fast_start_long, self.long_param["r"],
+                                                       self.long_param["r_max"], self.long_param["r_min"],
+                                                       self.long_param["b_min"],
+                                                       self.long_param["b_low"], self.long_param["b_high"])
+        self.running_fast_start_long = running_fast_start
+        return r_next, b_delay
 
-    def get(self, time, download, bandwidth_factor, buffer_level, monoton, r, r_max, r_min, b_min, b_low, b_high):
+    def get(self, time, download, bandwidth_factor, buffer_level, monoton, running_fast_start, r, r_max, r_min, b_min,
+            b_low, b_high):
         b_opt = (b_low + b_high) * 0.5
         t = time
         b_delay = 0
@@ -52,8 +62,8 @@ class DualAdaption:
 
         r_n = segment.representation
         average_throughput = self.bandwidth_manager.get_average_bandwidth(t - self.delta_t, t) * bandwidth_factor
-
-        if self.running_fast_start \
+        segment_throughput = self.bandwidth_manager.get_average_bandwidth(t - segment.duration, t) * bandwidth_factor
+        if running_fast_start \
                 and r_n != r_max \
                 and monoton \
                 and r[r_n] <= self.a[0] * average_throughput:
@@ -69,11 +79,11 @@ class DualAdaption:
                 if buffer_level > b_high:
                     b_delay = b_high - segment.duration
         else:
-            self.running_fast_start = False
+            running_fast_start = False
             if buffer_level < b_min:
                 r_next = r_min
             elif buffer_level < b_low:
-                if r_n != r_min and r[r_n] >= download.average_bandwidth():
+                if r_n != r_min and r[r_n] >= segment_throughput:
                     r_next = r_n - 1
             elif buffer_level < b_high:
                 if r_n == r_max or r[r_n + 1] >= self.a[4] * average_throughput:
@@ -87,7 +97,7 @@ class DualAdaption:
                     b_delay = max(buffer_level - segment.duration, b_opt)
         # we return max wait time instead of b_delay
         # print(buffer_level, b_delay)
-        return r_next, b_delay if b_delay == 0 else max(buffer_level - b_delay, 0)
+        return r_next, b_delay if b_delay == 0 else max(buffer_level - b_delay, 0), running_fast_start
 
     def monoton_short(self, time):
         steps = 10

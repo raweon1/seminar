@@ -33,14 +33,17 @@ class BandwidthManager:
 
     def get_average_bandwidth(self, start_time: float, end_time: float):
         average_bandwidth = 0
+        sum_interval_len = 0
         for (start, end, bandwidth) in self.bandwidth_trace:
             if start < end_time and end == -1:
                 average_bandwidth += bandwidth * (end_time - max(start, start_time))
+                sum_interval_len += (end_time - max(start, start_time))
                 break
             else:
                 interval_len = self.interval_len(start, end, start_time, end_time)
+                sum_interval_len += interval_len
                 average_bandwidth += bandwidth * interval_len
-        return average_bandwidth / (end_time - start_time)
+        return average_bandwidth / sum_interval_len
 
     @staticmethod
     def interval_len(i1_b, i1_e, i2_b, i2_e):
