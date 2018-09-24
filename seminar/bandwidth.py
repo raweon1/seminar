@@ -35,7 +35,7 @@ class BandwidthManager:
         average_bandwidth = 0
         for (start, end, bandwidth) in self.bandwidth_trace:
             if start < end_time and end == -1:
-                average_bandwidth += bandwidth * (end_time - start)
+                average_bandwidth += bandwidth * (end_time - max(start, start_time))
                 break
             else:
                 interval_len = self.interval_len(start, end, start_time, end_time)

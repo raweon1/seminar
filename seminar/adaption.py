@@ -1,6 +1,109 @@
 from numpy import linspace
 
+from seminar.bandwidth import BandwidthManager
 from seminar.buffer import Buffer
+
+
+class DualAdaption:
+    # representation_byte_rates, b_min, b_low, b_high
+    def __init__(self, bandwidth_manager: BandwidthManager, buffer, short_factor, short_param, long_param):
+        # safety margins, values used by the paper
+        self.a = [0.75, 0.33, 0.5, 0.75, 0.9]
+        self.delta_beta = 1
+        self.delta_t = 5
+
+        self.bandwidth_manager = bandwidth_manager
+
+        self.short_factor = short_factor
+        self.short_param = short_param
+        self.long_param = long_param
+
+        self.running_fast_start = True
+
+        self.buffer = buffer
+
+        self.short = []
+
+    def get_short(self, index, time):
+        segment, download = self.buffer.short_segments[index]
+        buffer_level = self.buffer.buffer_level_short(time)
+        monoton = self.monoton_short(time)
+
+        self.short.append((time, buffer_level))
+
+        return self.get(time, download, self.short_factor, buffer_level, monoton, self.short_param["r"],
+                        self.short_param["r_max"], self.short_param["r_min"], self.short_param["b_min"],
+                        self.short_param["b_low"], self.short_param["b_high"])
+
+    def get_long(self, index, time):
+        segment, download = self.buffer.long_segments[index]
+        buffer_level = self.buffer.buffer_level(time)
+        monoton = self.monoton_long(time)
+        return self.get(time, download, 1 - self.short_factor, buffer_level, monoton, self.long_param["r"],
+                        self.long_param["r_max"], self.long_param["r_min"], self.long_param["b_min"],
+                        self.long_param["b_low"], self.long_param["b_high"])
+
+    def get(self, time, download, bandwidth_factor, buffer_level, monoton, r, r_max, r_min, b_min, b_low, b_high):
+        b_opt = (b_low + b_high) * 0.5
+        t = time
+        b_delay = 0
+        segment = download.segment
+        r_next = segment.representation
+
+        r_n = segment.representation
+        average_throughput = self.bandwidth_manager.get_average_bandwidth(t - self.delta_t, t) * bandwidth_factor
+
+        if self.running_fast_start \
+                and r_n != r_max \
+                and monoton \
+                and r[r_n] <= self.a[0] * average_throughput:
+            if buffer_level < b_min:
+                if r[r_n + 1] <= self.a[1] * average_throughput:
+                    r_next = r_n + 1
+            elif buffer_level < b_low:
+                if r[r_n + 1] <= self.a[2] * average_throughput:
+                    r_next = r_n + 1
+            else:
+                if r[r_n + 1] <= self.a[3] * average_throughput:
+                    r_next = r_n + 1
+                if buffer_level > b_high:
+                    b_delay = b_high - segment.duration
+        else:
+            self.running_fast_start = False
+            if buffer_level < b_min:
+                r_next = r_min
+            elif buffer_level < b_low:
+                if r_n != r_min and r[r_n] >= download.average_bandwidth():
+                    r_next = r_n - 1
+            elif buffer_level < b_high:
+                if r_n == r_max or r[r_n + 1] >= self.a[4] * average_throughput:
+                    b_delay = max(buffer_level - segment.duration, b_opt)
+            else:
+                if r_n == r_max or r[r_n + 1] >= self.a[4] * average_throughput:
+                    b_delay = max(buffer_level - segment.duration, b_opt)
+                else:
+                    while r_next < r_max and r[r_next + 1] <= self.a[4] * average_throughput:
+                        r_next += 1
+                    b_delay = max(buffer_level - segment.duration, b_opt)
+        # we return max wait time instead of b_delay
+        # print(buffer_level, b_delay)
+        return r_next, b_delay if b_delay == 0 else max(buffer_level - b_delay, 0)
+
+    def monoton_short(self, time):
+        steps = 10
+        tmp = [self.buffer.buffer_level_short(i) for i in linspace(0, time, steps, endpoint=True)]
+        for i in range(0, steps - 1):
+            if tmp[i] > tmp[i + 1]:
+                return False
+        return True
+
+    def monoton_long(self, time):
+        steps = 10
+        tmp = [self.buffer.buffer_level(i) for i in linspace(0, time, steps, endpoint=True)]
+        for i in range(0, steps - 1):
+            if tmp[i] > tmp[i + 1]:
+                return False
+        return True
 
 
 class Name:
@@ -33,7 +136,7 @@ class Name:
         average_throughput = self.average_throughput(t - self.delta_t, t)
 
         if self.running_fast_start \
-                and r_n != self.r_max\
+                and r_n != self.r_max \
                 and self.monoton(t) \
                 and self.r[r_n] <= self.a[0] * average_throughput:
             if buffer_level < self.b_min:
