@@ -63,6 +63,7 @@ class DualAdaption:
         r_n = segment.representation
         average_throughput = self.bandwidth_manager.get_average_bandwidth(t - self.delta_t, t) * bandwidth_factor
         segment_throughput = self.bandwidth_manager.get_average_bandwidth(t - segment.duration, t) * bandwidth_factor
+
         if running_fast_start \
                 and r_n != r_max \
                 and monoton \
@@ -100,7 +101,7 @@ class DualAdaption:
         return r_next, b_delay if b_delay == 0 else max(buffer_level - b_delay, 0), running_fast_start
 
     def monoton_short(self, time):
-        steps = 10
+        steps = 5
         tmp = [self.buffer.buffer_level_short(i) for i in linspace(0, time, steps, endpoint=True)]
         for i in range(0, steps - 1):
             if tmp[i] > tmp[i + 1]:
@@ -108,7 +109,7 @@ class DualAdaption:
         return True
 
     def monoton_long(self, time):
-        steps = 10
+        steps = 5
         tmp = [self.buffer.buffer_level(i) for i in linspace(0, time, steps, endpoint=True)]
         for i in range(0, steps - 1):
             if tmp[i] > tmp[i + 1]:

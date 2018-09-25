@@ -116,9 +116,13 @@ class DualBuffer:
 
     def buffer_level(self, time):
         buffer_level = 0
+        add = 6
         for segment, download in self.long_segments.values():
+            if segment.segment_index == 0:
+                add = 0
             if download.queue_time < time:
                 buffer_level += segment.duration * download.progress(time)
+        buffer_level += add
         return buffer_level - self.playback_level(time)
 
     def buffer_level_short(self, time):
@@ -188,7 +192,8 @@ class DownloadManager:
             self.buffer.download_short_segment(segment, download)
             self.download_short.append(download)
             if self.download_long.__len__() > 0:
-                self.download_long[0].pause()
+                # self.download_long[0].pause()
+                pass
         else:
             self.buffer.download_long_segment(segment, download)
             self.download_long.append(download)
@@ -201,11 +206,14 @@ class DownloadManager:
 
 
 class SimEnv(simpy.Environment):
-    def __init__(self, short_factor, bandwidth_trace, segment_count, segment_sizes, deadlines, accum_viewport,
-                 viewport):
+    def __init__(self, short_factor, threshold, start_representation, foo,
+                 bandwidth_trace, segment_count, segment_sizes, deadlines, accum_viewport, viewport):
         super(SimEnv, self).__init__()
 
         self.short_factor = short_factor
+        self.q_threshold = threshold
+        self.starting_representation = start_representation
+        self.foo = foo
 
         self.segment_count = segment_count
         self.segment_sizes = segment_sizes
@@ -215,7 +223,6 @@ class SimEnv(simpy.Environment):
 
         self.tile_count = 64
         self.segment_duration = 2
-        self.threshold_short = 5
         self.tile_count_short = 12
 
         # average byte / second per quality
@@ -241,7 +248,7 @@ class SimEnv(simpy.Environment):
         long_param = {"r": self.byte_rates,
                       "r_max": self.byte_rates.__len__() - 1,
                       "r_min": 0,
-                      "b_min": self.threshold_short,
+                      "b_min": 5,
                       "b_low": 20,
                       "b_high": 50}
         self.adaption = DualAdaption(self.bandwidth_manager, self.buffer, self.short_factor, short_param, long_param)
@@ -252,8 +259,6 @@ class SimEnv(simpy.Environment):
         self.playback_stalled = False
         self.playback_sleep_event = self.event()
 
-        self.q_threshold = 0.5
-        self.starting_representation = 3
         self.download_short_index = 0
         self.download_long_index = 0
 
@@ -338,9 +343,14 @@ class SimEnv(simpy.Environment):
             representation, delay = self.adaption.get_long(self.download_long_index, self.now)
             if self.download_long_index <= self.download_short_index:
                 self.download_long_index = self.download_short_index + 1
+                if self.download_long_index == self.segment_count:
+                    break
             else:
                 self.download_long_index += 1
-            segment = self.get_accum_viewport_segment(representation, self.download_long_index)
+            if self.foo:
+                segment = self.get_accum_viewport_segment(representation, self.download_long_index)
+            else:
+                segment = self.get_even_segment(representation, self.download_long_index)
             yield self.timeout(delay)
             simprint(self, "(long) queued download segment: %d; representation %d" % (
                 self.download_long_index, representation))
@@ -457,6 +467,16 @@ class SimEnv(simpy.Environment):
                 tiles.append(segment_sizes[0] / self.tile_count)
         return Segment(index, representation, self.get_segment_duration(index), tiles, tile_qualities)
 
+    def get_even_segment(self, representation, index):
+        segment_sizes = self.segment_sizes[index]
+        segment_viewport = self.viewport[index]
+        tile_qualities = []
+        tiles = []
+        for tile in segment_viewport:
+            tile_qualities.append(representation)
+            tiles.append(segment_sizes[representation] / self.tile_count)
+        return Segment(index, representation, self.get_segment_duration(index), tiles, tile_qualities)
+
     def get_segment(self, representation, index) -> Segment:
         segment_sizes = self.segment_sizes[index]
         segment_viewport = self.viewport[index]
@@ -480,7 +500,8 @@ bandwidth = 781250
 bandwidth_trace = [(i, bandwidth - ((781250 * 5 / 6) * (i / 200))) for i in range(0, 200)]
 bandwidth_trace = [(0, bandwidth), (70, 0), (85, bandwidth / 2)]
 print(bandwidth_trace)
-sim = SimEnv(0.5, bandwidth_trace,
+sim = SimEnv(0, 1.5, 0, False,
+             bandwidth_trace,
              77,
              seminar.values.segment_sizes2,
              seminar.values.deadlines2,
@@ -489,6 +510,7 @@ sim = SimEnv(0.5, bandwidth_trace,
 sim.run()
 
 print(sim.adaption.short)
+print(sim.adaption.long)
 print(["short" if download.short else "long" for time, segment, download in sim.buffer.watched])
 
 
